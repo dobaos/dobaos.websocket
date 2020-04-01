@@ -1,14 +1,18 @@
 module dobaos_client;
 
 import std.base64;
+import std.conv;
+import std.datetime.stopwatch;
 import std.functional;
 import std.json;
+import std.random;
 import std.stdio;
 import std.string;
-import std.datetime.stopwatch;
 
 import tinyredis;
 import tinyredis.subscriber;
+
+auto rnd = Random(1);
 
 class DobaosClient {
   private Redis pub;
@@ -44,15 +48,12 @@ class DobaosClient {
         // init publisher
     pub = new Redis(redis_host, redis_port);
     // now handle message
-    void handleMessage(string pattern, string channel, string message)
-    {
+    void handleMessage(string pattern, string channel, string message) {
       try {
         if (channel != last_channel) {
           return;
         }
-
         JSONValue jres = parseJSON(message);
-
         // check if response is object
         if (!jres.type == JSONType.object) {
           return;
@@ -62,7 +63,6 @@ class DobaosClient {
         if (jmethod is null) {
           return;
         }
-
         response = jres;
         res_received = true;
       } catch(Exception e) {
@@ -113,8 +113,7 @@ class DobaosClient {
   public JSONValue commonRequest(string channel, string method, JSONValue payload) {
     res_received = false;
     response = null;
-    // replace pattern with unix time?
-    last_channel = res_pattern.replace("*", "42");
+    last_channel = res_pattern.replace("*", to!string(uniform(0, 255, rnd)));
 
     JSONValue jreq = parseJSON("{}");
     jreq["method"] = method;
@@ -124,9 +123,16 @@ class DobaosClient {
 
     auto sw = StopWatch(AutoStart.yes);
     auto dur = sw.peek();
-    while(!res_received && dur < msecs(req_timeout)) {
+    auto timeout = false;
+    while(!res_received && !timeout) {
       sub.processMessages();
       dur = sw.peek();
+      timeout = dur > msecs(req_timeout);
+    }
+    if (timeout) {
+      response = parseJSON("{}");
+      response["method"] = method;
+      response["payload"] = "ERR_REQ_TIMEOUT";
     }
 
     return response;
